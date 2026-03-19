@@ -112,16 +112,47 @@ function isExtensionContextValid() {
   }
 }
 
+function getExtensionRuntimeId() {
+  if (typeof chrome === "undefined" || !chrome.runtime) {
+    return null;
+  }
+
+  try {
+    return chrome.runtime.id || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildExtensionAssetUrl(runtimeId, assetPath) {
+  if (!runtimeId || !assetPath) {
+    return null;
+  }
+
+  return `chrome-extension://${runtimeId}/${assetPath.replace(/^\/+/, "")}`;
+}
+
 function resolveAssetUrl(assetPath) {
+  if (!assetPath) {
+    return null;
+  }
+
+  const normalizedAssetPath = assetPath.replace(/^\/+/, "");
+  const runtimeId = getExtensionRuntimeId();
+
   if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.getURL === "function") {
     try {
-      return chrome.runtime.getURL(assetPath);
+      return chrome.runtime.getURL(normalizedAssetPath);
     } catch (_) {
-      return null;
+      return buildExtensionAssetUrl(runtimeId, normalizedAssetPath);
     }
   }
 
-  return assetPath;
+  if (runtimeId) {
+    return buildExtensionAssetUrl(runtimeId, normalizedAssetPath);
+  }
+
+  return normalizedAssetPath;
 }
 
 function getRuntime(view) {
@@ -174,6 +205,31 @@ function getRouteKind(doc) {
   return null;
 }
 
+function isTopLevelView(view) {
+  if (!view) {
+    return true;
+  }
+
+  try {
+    return view.top === view;
+  } catch (_) {
+    return false;
+  }
+}
+
+function shouldInitializeLinkHidin(doc) {
+  const view = doc.defaultView;
+
+  // LinkedIn profile pages currently hand off the visible app surface to the
+  // same-origin /preload/ iframe. Skip the host document so only the visible
+  // frame applies the cleanup there.
+  if (getRouteKind(doc) === "profile" && isTopLevelView(view)) {
+    return false;
+  }
+
+  return true;
+}
+
 function shouldGatePaint(doc) {
   return Boolean(getRouteKind(doc));
 }
@@ -195,13 +251,12 @@ function ensureRuntimeStyles(doc) {
     return null;
   }
 
+  let style = doc.getElementById(RUNTIME_STYLE_ID);
   const fontUrl = resolveAssetUrl("assets/fonts/BricolageGrotesque-SemiBold.ttf");
 
   if (!fontUrl) {
-    return null;
+    return style || null;
   }
-
-  let style = doc.getElementById(RUNTIME_STYLE_ID);
 
   if (!style) {
     style = doc.createElement("style");
@@ -209,7 +264,7 @@ function ensureRuntimeStyles(doc) {
     doc.head.append(style);
   }
 
-  style.textContent = `
+  const nextStyleText = `
     @font-face {
       font-family: "Bricolage Grotesque";
       src: url("${fontUrl}") format("truetype");
@@ -218,6 +273,10 @@ function ensureRuntimeStyles(doc) {
       font-display: swap;
     }
   `;
+
+  if (style.textContent !== nextStyleText) {
+    style.textContent = nextStyleText;
+  }
 
   return style;
 }
@@ -234,6 +293,19 @@ function syncPendingForRoute(doc, runtime, options, reveal) {
   if (runtime.pending) {
     runtime.revealTimeoutId = setTimeout(reveal, options.revealTimeoutMs || 1500);
   }
+}
+
+function scheduleRuntimeSync(runtime, sync, delayMs) {
+  if (runtime.syncScheduled) {
+    return;
+  }
+
+  runtime.syncScheduled = true;
+  runtime.syncTimeoutId = setTimeout(() => {
+    runtime.syncTimeoutId = null;
+    runtime.syncScheduled = false;
+    sync();
+  }, delayMs);
 }
 
 function findNewsParagraph(doc) {
@@ -360,20 +432,19 @@ function createPanel(doc) {
 
 function ensurePanel(doc, layoutRoot, runtime, options) {
   const messages = options.messages || MOTIVATIONAL_SENTENCES;
-  const imageUrls = (options.imageUrls || BACKGROUND_IMAGES).map(resolveAssetUrl).filter(Boolean);
-
-  if (!imageUrls.length) {
-    return null;
-  }
-
   const panel = createPanel(doc);
+  const imageUrls = (options.imageUrls || BACKGROUND_IMAGES).map(resolveAssetUrl).filter(Boolean);
 
   if (typeof runtime.messageIndex !== "number") {
     runtime.messageIndex = chooseIndex(messages, options.random);
   }
 
-  if (!runtime.backgroundImageUrl) {
+  if (!runtime.backgroundImageUrl && imageUrls.length) {
     runtime.backgroundImageUrl = imageUrls[chooseIndex(imageUrls, options.random)] || "";
+  }
+
+  if (!runtime.backgroundImageUrl) {
+    return panel.isConnected ? panel : null;
   }
 
   if (!panel.isConnected) {
@@ -616,14 +687,29 @@ function applyLinkHidinExperience(doc, options = {}) {
   };
 }
 
-function isInternalPanelMutation(mutation) {
+function isInternalRuntimeStyleMutation(mutation) {
+  const target = mutation.target;
+  const runtimeStyleTarget =
+    target &&
+    (target.id === RUNTIME_STYLE_ID || target.parentElement?.id === RUNTIME_STYLE_ID);
+
+  if (runtimeStyleTarget) {
+    return true;
+  }
+
+  return Array.from(mutation.addedNodes || []).some(
+    (node) => node && node.id === RUNTIME_STYLE_ID
+  );
+}
+
+function isInternalLinkHidinMutation(mutation) {
   const target = mutation.target;
 
   if (!target || typeof target.closest !== "function") {
-    return false;
+    return isInternalRuntimeStyleMutation(mutation);
   }
 
-  return Boolean(target.closest(`#${PANEL_ID}`));
+  return Boolean(target.closest(`#${PANEL_ID}`)) || isInternalRuntimeStyleMutation(mutation);
 }
 
 function hasUnhiddenDistractingContent(doc) {
@@ -669,6 +755,7 @@ function initializeLinkHidin(doc = document, options = {}) {
     }
   };
   const runSync = () => {
+    ensureRuntimeStyles(doc);
     const result = applyLinkHidinExperience(doc, { ...options, messages, runtime });
 
     if (!runtime.pending || isReadyToReveal(doc, result)) {
@@ -678,7 +765,6 @@ function initializeLinkHidin(doc = document, options = {}) {
     return result;
   };
 
-  ensureRuntimeStyles(doc);
   syncPendingForRoute(doc, runtime, options, reveal);
   runtime.lastRoute = doc.location ? doc.location.href : "";
 
@@ -702,11 +788,11 @@ function initializeLinkHidin(doc = document, options = {}) {
 
   if (!runtime.observer && typeof MutationObserver !== "undefined" && doc.documentElement) {
     runtime.observer = new MutationObserver((mutations) => {
-      if (mutations.every(isInternalPanelMutation)) {
+      if (mutations.every(isInternalLinkHidinMutation)) {
         return;
       }
 
-      runSync();
+      scheduleRuntimeSync(runtime, runSync, options.observerSyncDelayMs || 120);
     });
 
     runtime.observer.observe(doc.documentElement, {
@@ -830,10 +916,12 @@ if (typeof module !== "undefined") {
     hideNotificationsNav,
     hideScaffoldAside,
     initializeLinkHidin,
+    isTopLevelView,
     ensureRuntimeStyles,
     isJobsLabel,
     isNotificationsLabel,
     isReadyToReveal,
+    shouldInitializeLinkHidin,
     syncPendingForRoute,
     normalizeText
   };
@@ -841,7 +929,7 @@ if (typeof module !== "undefined") {
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   void getStoredEnabledState().then((enabled) => {
-    if (enabled) {
+    if (enabled && shouldInitializeLinkHidin(document)) {
       initializeLinkHidin(document);
     }
   });

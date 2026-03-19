@@ -9,6 +9,33 @@ const manifestPath = path.join(repoRoot, "manifest.json");
 const stylesheetPath = path.join(repoRoot, "feed-block.css");
 const iconDir = path.join(repoRoot, "assets", "icons");
 const contentScript = require(path.join(repoRoot, "content.js"));
+const TEST_EXTENSION_ID = "test-extension-id";
+
+function createMockChrome(overrides = {}) {
+  const { runtime: runtimeOverrides = {}, ...chromeOverrides } = overrides;
+
+  return {
+    runtime: {
+      id: TEST_EXTENSION_ID,
+      getURL(assetPath) {
+        return `chrome-extension://${TEST_EXTENSION_ID}/${assetPath}`;
+      },
+      ...runtimeOverrides
+    },
+    ...chromeOverrides
+  };
+}
+
+async function withMockChrome(mockChrome, callback) {
+  const originalChrome = global.chrome;
+  global.chrome = mockChrome;
+
+  try {
+    return await callback();
+  } finally {
+    global.chrome = originalChrome;
+  }
+}
 
 function createDom(stylesheet) {
   return new JSDOM(
@@ -222,6 +249,7 @@ test("manifest registers CSS, content script, and web assets for LinkedIn", () =
   assert.deepEqual(manifest.permissions, ["storage", "tabs"]);
   assert.equal(manifest.content_scripts.length, 1);
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://www.linkedin.com/*"]);
+  assert.equal(manifest.content_scripts[0].all_frames, true);
   assert.deepEqual(manifest.content_scripts[0].css, ["feed-block.css"]);
   assert.deepEqual(manifest.content_scripts[0].js, ["content.js"]);
   assert.equal(manifest.content_scripts[0].run_at, "document_start");
@@ -245,36 +273,40 @@ test("manifest registers CSS, content script, and web assets for LinkedIn", () =
 test("content script hides feed, news, and notifications while injecting the replacement panel", () => {
   const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
   const dom = createDom(stylesheet);
-  const runtime = {};
-  const result = contentScript.applyLinkHidinExperience(dom.window.document, {
-    runtime,
-    random: () => 0,
-    startRotation: false,
-    messages: ["Keep going.", "Next sentence."],
-    imageUrls: ["/images/backdrop.jpg"]
+  return withMockChrome(createMockChrome(), () => {
+    const runtime = {};
+    const result = contentScript.applyLinkHidinExperience(dom.window.document, {
+      runtime,
+      random: () => 0,
+      startRotation: false,
+      messages: ["Keep going.", "Next sentence."]
+    });
+
+    const feedColumn = dom.window.document.getElementById("feed-column");
+    const newsColumn = dom.window.document.getElementById("news-column");
+    const notificationsNav = dom.window.document.getElementById("notifications-nav");
+    const jobsNav = dom.window.document.getElementById("jobs-nav");
+    const layout = dom.window.document.getElementById("layout");
+    const leftColumn = dom.window.document.getElementById("left-column");
+    const panel = dom.window.document.getElementById("linkhidin-panel");
+
+    assert.equal(result.applied, true);
+    assert.equal(dom.window.getComputedStyle(feedColumn).display, "none");
+    assert.equal(dom.window.getComputedStyle(newsColumn).display, "none");
+    assert.equal(dom.window.getComputedStyle(notificationsNav).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(jobsNav).display, "none");
+    assert.ok(panel);
+    assert.equal(dom.window.getComputedStyle(layout).display, "flex");
+    assert.equal(layout.dataset.linkhidinLayout, "two-column");
+    assert.equal(leftColumn.dataset.linkhidinLeftRail, "true");
+    assert.equal(panel.previousElementSibling, leftColumn);
+    assert.equal(panel.querySelector("#linkhidin-panel-sentence").textContent, "Keep going.");
+    assert.match(
+      panel.style.getPropertyValue("--linkhidin-background-image"),
+      /^url\("chrome-extension:\/\/test-extension-id\/assets\/images\//
+    );
+    assert.equal(dom.window.document.body.dataset.linkhidinHasPanel, "true");
   });
-
-  const feedColumn = dom.window.document.getElementById("feed-column");
-  const newsColumn = dom.window.document.getElementById("news-column");
-  const notificationsNav = dom.window.document.getElementById("notifications-nav");
-  const jobsNav = dom.window.document.getElementById("jobs-nav");
-  const layout = dom.window.document.getElementById("layout");
-  const leftColumn = dom.window.document.getElementById("left-column");
-  const panel = dom.window.document.getElementById("linkhidin-panel");
-
-  assert.equal(result.applied, true);
-  assert.equal(dom.window.getComputedStyle(feedColumn).display, "none");
-  assert.equal(dom.window.getComputedStyle(newsColumn).display, "none");
-  assert.equal(dom.window.getComputedStyle(notificationsNav).display, "none");
-  assert.notEqual(dom.window.getComputedStyle(jobsNav).display, "none");
-  assert.ok(panel);
-  assert.equal(dom.window.getComputedStyle(layout).display, "flex");
-  assert.equal(layout.dataset.linkhidinLayout, "two-column");
-  assert.equal(leftColumn.dataset.linkhidinLeftRail, "true");
-  assert.equal(panel.previousElementSibling, leftColumn);
-  assert.equal(panel.querySelector("#linkhidin-panel-sentence").textContent, "Keep going.");
-  assert.match(panel.style.getPropertyValue("--linkhidin-background-image"), /backdrop\.jpg/);
-  assert.equal(dom.window.document.body.dataset.linkhidinHasPanel, "true");
 });
 
 test("rotating copy covers 50 sentences and advances deterministically", () => {
@@ -369,11 +401,67 @@ test("jobs aria-label mentioning notifications does not get treated as the notif
 test("runtime style injects the bundled font with a resolved asset URL", () => {
   const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
   const dom = createNonTargetDom(stylesheet);
-  const style = contentScript.ensureRuntimeStyles(dom.window.document);
+  return withMockChrome(createMockChrome(), () => {
+    const style = contentScript.ensureRuntimeStyles(dom.window.document);
 
-  assert.ok(style);
-  assert.match(style.textContent, /@font-face/);
-  assert.match(style.textContent, /assets\/fonts\/BricolageGrotesque-SemiBold\.ttf/);
+    assert.ok(style);
+    assert.match(style.textContent, /@font-face/);
+    assert.match(style.textContent, /Bricolage Grotesque/);
+    assert.match(
+      style.textContent,
+      /chrome-extension:\/\/test-extension-id\/assets\/fonts\/BricolageGrotesque-SemiBold\.ttf/
+    );
+  });
+});
+
+test("runtime style injection is idempotent across repeated syncs", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+  const dom = createNonTargetDom(stylesheet);
+  return withMockChrome(createMockChrome(), () => {
+    const style = contentScript.ensureRuntimeStyles(dom.window.document);
+    const firstTextNode = style.firstChild;
+    const secondStyle = contentScript.ensureRuntimeStyles(dom.window.document);
+
+    assert.equal(secondStyle, style);
+    assert.equal(secondStyle.firstChild, firstTextNode);
+  });
+});
+
+test("asset resolution still renders the feed panel and font-face when runtime getURL throws", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+  const dom = createDom(stylesheet);
+
+  return withMockChrome(
+    createMockChrome({
+      runtime: {
+        getURL() {
+          throw new Error("Extension context invalidated.");
+        }
+      }
+    }),
+    () => {
+      const style = contentScript.ensureRuntimeStyles(dom.window.document);
+      const result = contentScript.applyLinkHidinExperience(dom.window.document, {
+        runtime: {},
+        random: () => 0,
+        startRotation: false,
+        messages: ["Keep going."]
+      });
+      const panel = dom.window.document.getElementById("linkhidin-panel");
+
+      assert.ok(style);
+      assert.ok(panel);
+      assert.equal(panel.querySelector("#linkhidin-panel-sentence").textContent, "Keep going.");
+      assert.match(
+        panel.style.getPropertyValue("--linkhidin-background-image"),
+        /^url\("chrome-extension:\/\/test-extension-id\/assets\/images\//
+      );
+      assert.match(
+        style.textContent,
+        /chrome-extension:\/\/test-extension-id\/assets\/fonts\/BricolageGrotesque-SemiBold\.ttf/
+      );
+    }
+  );
 });
 
 test("stored enabled state defaults to true when chrome storage is unavailable", async () => {
@@ -426,6 +514,36 @@ test("non-target routes are not paint-gated", () => {
   assert.equal(dom.window.document.documentElement.hasAttribute("data-lockdin-pending"), false);
   assert.equal(runtime.pending, false);
   assert.equal(contentScript.getRouteKind(dom.window.document), null);
+});
+
+test("top-level profile host skips initialization while preload iframe remains eligible", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+  const profileDom = createProfileDom(stylesheet);
+  const preloadDom = createPageDom(
+    stylesheet,
+    "https://www.linkedin.com/preload/",
+    '<section id="profile-core"><h1>Tomas Roda</h1></section>'
+  );
+
+  assert.equal(contentScript.shouldInitializeLinkHidin(profileDom.window.document), false);
+  assert.equal(contentScript.shouldInitializeLinkHidin(preloadDom.window.document), true);
+});
+
+test("preload iframe document still hides notifications and ads without paint gating", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+  const dom = createPageDom(
+    stylesheet,
+    "https://www.linkedin.com/preload/",
+    '<section id="profile-core"><h1>Tomas Roda</h1></section>'
+  );
+  const runtime = contentScript.initializeLinkHidin(dom.window.document, {
+    startRotation: false,
+    revealTimeoutMs: 10
+  });
+
+  assert.equal(dom.window.document.documentElement.hasAttribute("data-lockdin-pending"), false);
+  assert.equal(runtime.pending, false);
+  assertInvariantsHold(dom.window.document, "preload-frame");
 });
 
 test("client-side navigation to messaging reapplies nav and ad hiding without a refresh", async () => {

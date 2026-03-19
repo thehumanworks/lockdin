@@ -1,0 +1,13 @@
+{
+  "name": "lockdin",
+  "version": "1.3.0",
+  "private": true,
+  "description": "Chrome extension that hides LinkedIn's main feed, news rail, and notifications entry.",
+  "scripts": {
+    "test": "node --test",
+    "validate": "npm test"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

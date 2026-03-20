@@ -7,7 +7,7 @@
     "test": "node --test",
     "validate": "npm test",
     "sync-photos": "node scripts/sync-background-image-count.mjs",
-    "package": "npm run sync-photos && mkdir -p dist && rm -f dist/lockdin-*.zip && zip -r \"dist/lockdin-$(node -p \"require('./package.json').version\").zip\" manifest.json background.js content.js feed-block.css assets"
+    "package": "npm run sync-photos && mkdir -p dist && rm -f dist/lockdin-*.zip && zip -r \"dist/lockdin-$(node -p \"require('./package.json').version\").zip\" manifest.json background.js content.js feed-block.css assets -x \"*/.*\" \"*/__MACOSX/*\""
   },
   "devDependencies": {
     "jsdom": "^26.1.0"

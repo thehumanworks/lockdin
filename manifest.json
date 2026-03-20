@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LockdIn",
-  "version": "1.3.5",
-  "description": "Hides LinkedIn's main feed, news rail, and notifications entry while showing a motivational backdrop.",
+  "version": "1.3.7",
+  "description": "Hides LinkedIn's main feed, news rail, and notifications entry behind a motivational panel with rotating artwork backdrops.",
   "permissions": [
     "storage",
     "tabs"

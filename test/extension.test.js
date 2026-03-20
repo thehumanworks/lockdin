@@ -516,6 +516,29 @@ test("non-target routes are not paint-gated", () => {
   assert.equal(contentScript.getRouteKind(dom.window.document), null);
 });
 
+test("shouldGatePaint applies only on feed routes", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+  assert.equal(contentScript.shouldGatePaint(createDom(stylesheet).window.document), true);
+  assert.equal(contentScript.shouldGatePaint(createMessagingDom(stylesheet).window.document), false);
+  assert.equal(contentScript.shouldGatePaint(createProfileDom(stylesheet).window.document), false);
+  assert.equal(contentScript.shouldGatePaint(createNonTargetDom(stylesheet).window.document), false);
+});
+
+test("messaging and profile routes skip paint gating after init", () => {
+  const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+
+  for (const factory of [createMessagingDom, createProfileDom]) {
+    const dom = factory(stylesheet);
+    const runtime = contentScript.initializeLinkHidin(dom.window.document, {
+      startRotation: false,
+      revealTimeoutMs: 10
+    });
+
+    assert.equal(dom.window.document.documentElement.hasAttribute("data-lockdin-pending"), false);
+    assert.equal(runtime.pending, false);
+  }
+});
+
 test("top-level profile host skips initialization while preload iframe remains eligible", () => {
   const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
   const profileDom = createProfileDom(stylesheet);

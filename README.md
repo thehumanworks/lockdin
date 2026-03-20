@@ -20,9 +20,4 @@ Click the LockdIn toolbar button to toggle the extension on or off for LinkedIn.
 
 - The news rail is detected by locating a `<p>` whose text normalizes to `Linkedin News`, then hiding the matching top-level column in the main layout.
 - The replacement panel uses the bundled `Bricolage Grotesque` font and rotates through 50 hardcoded motivational lines.
-- Background images are randomly selected from bundled free stock photos sourced from Pexels:
-  - `workspace-plants.jpg`
-  - `studio-chair.jpg`
-  - `desk-hello.jpg`
-  - `dolomites.jpg`
-  - `sunrise-peaks.jpg`
+- Background images are randomly selected from bundled `assets/images/photo_0.jpg`, `photo_1.jpg`, … (run `npm run sync-photos` after adding or removing images so `content.js` stays in sync).

@@ -14,13 +14,7 @@ const SOCIAL_SECTION_TITLES = new Set([
   "people you may know",
   "you might like"
 ]);
-const BACKGROUND_IMAGES = [
-  "assets/images/workspace-plants.jpg",
-  "assets/images/studio-chair.jpg",
-  "assets/images/desk-hello.jpg",
-  "assets/images/dolomites.jpg",
-  "assets/images/sunrise-peaks.jpg"
-];
+const BACKGROUND_IMAGES = Array.from({ length: 11 }, (_, i) => `assets/images/photo_${i}.jpg`);
 const MOTIVATIONAL_SENTENCES = [
   "Your next role is built one focused hour at a time.",
   "A calm search beats a frantic scroll every single day.",
@@ -231,7 +225,7 @@ function shouldInitializeLinkHidin(doc) {
 }
 
 function shouldGatePaint(doc) {
-  return Boolean(getRouteKind(doc));
+  return getRouteKind(doc) === "feed";
 }
 
 function setPendingState(doc, isPending) {
@@ -922,6 +916,7 @@ if (typeof module !== "undefined") {
     isNotificationsLabel,
     isReadyToReveal,
     shouldInitializeLinkHidin,
+    shouldGatePaint,
     syncPendingForRoute,
     normalizeText
   };
